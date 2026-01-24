@@ -1,0 +1,47 @@
+spring:
+  profiles:
+    include:
+      - customdomain
+
+app:
+  customdomain:
+    enabled: true
+    max-domains-per-team: {{maxDomainsPerTeam}}
+    verification-timeout-hours: {{verificationTimeoutHours}}
+    fallback-domain: "{{fallbackDomain}}"
+    ssl-provider: "{{sslProvider}}"
+    verification-method: "{{verificationMethod}}"
+    {{#enableAutoRenewal}}
+    auto-renewal: true
+    {{/enableAutoRenewal}}
+    {{^enableAutoRenewal}}
+    auto-renewal: false
+    {{/enableAutoRenewal}}
+    {{#enableDomainBlocklist}}
+    domain-blocklist:
+      enabled: true
+      blocked-patterns: "${DOMAIN_BLOCKED_PATTERNS:}"
+    {{/enableDomainBlocklist}}
+    dns:
+      timeout-seconds: 10
+    {{#sslProvider_cloudflare-for-saas}}
+    cloudflare:
+      zone-id: "${CLOUDFLARE_ZONE_ID:}"
+      api-token: "${CLOUDFLARE_API_TOKEN:}"
+    {{/sslProvider_cloudflare-for-saas}}
+    {{#sslProvider_lets-encrypt}}
+    letsencrypt:
+      acme-server: "${LETSENCRYPT_ACME_SERVER:https://acme-v02.api.letsencrypt.org/directory}"
+    {{/sslProvider_lets-encrypt}}
+    {{#sslProvider_aws-acm}}
+    aws:
+      acm:
+        region: "${AWS_REGION:us-east-1}"
+    {{/sslProvider_aws-acm}}
+
+logging:
+  level:
+    {{packageName}}.service.CustomDomainService: INFO
+    {{packageName}}.service.DnsVerificationService: INFO
+    {{packageName}}.service.SslProvisioningService: INFO
+    {{packageName}}.scheduler.DomainVerificationScheduler: INFO

@@ -1,0 +1,245 @@
+package {{packageName}}.jpa.entity;
+
+import {{packageName}}.model.enumtype.DomainStatus;
+import {{packageName}}.model.enumtype.SslStatus;
+import jakarta.persistence.*;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.UUID;
+
+/**
+ * Entity representing a custom domain configuration for a team.
+ * Handles domain ownership verification and SSL certificate management.
+ */
+@Entity
+@Table(name = "custom_domains", indexes = {
+    @Index(name = "idx_custom_domains_domain", columnList = "domain", unique = true),
+    @Index(name = "idx_custom_domains_team", columnList = "team_id"),
+    @Index(name = "idx_custom_domains_status", columnList = "status"),
+    @Index(name = "idx_custom_domains_verification_token", columnList = "verification_token", unique = true)
+})
+public class CustomDomainEntity extends BaseEntity {
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "team_id", nullable = false)
+    private TeamEntity team;
+
+    @Column(name = "domain", nullable = false, unique = true, length = 255)
+    private String domain;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 30)
+    private DomainStatus status = DomainStatus.PENDING_VERIFICATION;
+
+    // DNS Verification
+    @Column(name = "verification_token", unique = true, length = 64)
+    private String verificationToken;
+
+    @Column(name = "verification_record_name", length = 255)
+    private String verificationRecordName;
+
+    @Column(name = "verification_record_value", length = 512)
+    private String verificationRecordValue;
+
+    @Column(name = "verification_expires_at")
+    private Instant verificationExpiresAt;
+
+    @Column(name = "verified_at")
+    private Instant verifiedAt;
+
+    // SSL Certificate
+    @Enumerated(EnumType.STRING)
+    @Column(name = "ssl_status", length = 20)
+    private SslStatus sslStatus = SslStatus.PENDING;
+
+    @Column(name = "ssl_certificate_id", length = 255)
+    private String sslCertificateId;
+
+    @Column(name = "ssl_expires_at")
+    private Instant sslExpiresAt;
+
+    {{#sslProvider_cloudflare-for-saas}}
+    // Cloudflare for SaaS specific fields
+    @Column(name = "cloudflare_hostname_id", length = 64)
+    private String cloudflareHostnameId;
+
+    @Column(name = "cloudflare_status", length = 30)
+    private String cloudflareStatus;
+    {{/sslProvider_cloudflare-for-saas}}
+
+    {{#sslProvider_aws-acm}}
+    // AWS ACM specific fields
+    @Column(name = "acm_certificate_arn", length = 512)
+    private String acmCertificateArn;
+
+    @Column(name = "acm_validation_cname_name", length = 255)
+    private String acmValidationCnameName;
+
+    @Column(name = "acm_validation_cname_value", length = 512)
+    private String acmValidationCnameValue;
+    {{/sslProvider_aws-acm}}
+
+    @PrePersist
+    public void prePersist() {
+        if (verificationToken == null) {
+            verificationToken = UUID.randomUUID().toString().replace("-", "");
+        }
+        if (verificationExpiresAt == null) {
+            verificationExpiresAt = Instant.now().plus({{verificationTimeoutHours}}, ChronoUnit.HOURS);
+        }
+        {{#verificationMethod_cname}}
+        if (verificationRecordName == null) {
+            verificationRecordName = "_grablin-verify." + domain;
+            verificationRecordValue = verificationToken + ".verify.{{fallbackDomain}}";
+        }
+        {{/verificationMethod_cname}}
+        {{#verificationMethod_txt}}
+        if (verificationRecordName == null) {
+            verificationRecordName = "_grablin-verify." + domain;
+            verificationRecordValue = "grablin-verification=" + verificationToken;
+        }
+        {{/verificationMethod_txt}}
+    }
+
+    // Getters and Setters
+
+    public TeamEntity getTeam() {
+        return team;
+    }
+
+    public void setTeam(TeamEntity team) {
+        this.team = team;
+    }
+
+    public String getDomain() {
+        return domain;
+    }
+
+    public void setDomain(String domain) {
+        this.domain = domain;
+    }
+
+    public DomainStatus getStatus() {
+        return status;
+    }
+
+    public void setStatus(DomainStatus status) {
+        this.status = status;
+    }
+
+    public String getVerificationToken() {
+        return verificationToken;
+    }
+
+    public void setVerificationToken(String verificationToken) {
+        this.verificationToken = verificationToken;
+    }
+
+    public String getVerificationRecordName() {
+        return verificationRecordName;
+    }
+
+    public void setVerificationRecordName(String verificationRecordName) {
+        this.verificationRecordName = verificationRecordName;
+    }
+
+    public String getVerificationRecordValue() {
+        return verificationRecordValue;
+    }
+
+    public void setVerificationRecordValue(String verificationRecordValue) {
+        this.verificationRecordValue = verificationRecordValue;
+    }
+
+    public Instant getVerificationExpiresAt() {
+        return verificationExpiresAt;
+    }
+
+    public void setVerificationExpiresAt(Instant verificationExpiresAt) {
+        this.verificationExpiresAt = verificationExpiresAt;
+    }
+
+    public Instant getVerifiedAt() {
+        return verifiedAt;
+    }
+
+    public void setVerifiedAt(Instant verifiedAt) {
+        this.verifiedAt = verifiedAt;
+    }
+
+    public SslStatus getSslStatus() {
+        return sslStatus;
+    }
+
+    public void setSslStatus(SslStatus sslStatus) {
+        this.sslStatus = sslStatus;
+    }
+
+    public String getSslCertificateId() {
+        return sslCertificateId;
+    }
+
+    public void setSslCertificateId(String sslCertificateId) {
+        this.sslCertificateId = sslCertificateId;
+    }
+
+    public Instant getSslExpiresAt() {
+        return sslExpiresAt;
+    }
+
+    public void setSslExpiresAt(Instant sslExpiresAt) {
+        this.sslExpiresAt = sslExpiresAt;
+    }
+
+    {{#sslProvider_cloudflare-for-saas}}
+    public String getCloudflareHostnameId() {
+        return cloudflareHostnameId;
+    }
+
+    public void setCloudflareHostnameId(String cloudflareHostnameId) {
+        this.cloudflareHostnameId = cloudflareHostnameId;
+    }
+
+    public String getCloudflareStatus() {
+        return cloudflareStatus;
+    }
+
+    public void setCloudflareStatus(String cloudflareStatus) {
+        this.cloudflareStatus = cloudflareStatus;
+    }
+    {{/sslProvider_cloudflare-for-saas}}
+
+    {{#sslProvider_aws-acm}}
+    public String getAcmCertificateArn() {
+        return acmCertificateArn;
+    }
+
+    public void setAcmCertificateArn(String acmCertificateArn) {
+        this.acmCertificateArn = acmCertificateArn;
+    }
+
+    public String getAcmValidationCnameName() {
+        return acmValidationCnameName;
+    }
+
+    public void setAcmValidationCnameName(String acmValidationCnameName) {
+        this.acmValidationCnameName = acmValidationCnameName;
+    }
+
+    public String getAcmValidationCnameValue() {
+        return acmValidationCnameValue;
+    }
+
+    public void setAcmValidationCnameValue(String acmValidationCnameValue) {
+        this.acmValidationCnameValue = acmValidationCnameValue;
+    }
+    {{/sslProvider_aws-acm}}
+
+    public boolean isVerificationExpired() {
+        return verificationExpiresAt != null && Instant.now().isAfter(verificationExpiresAt);
+    }
+
+    public boolean isActive() {
+        return status == DomainStatus.ACTIVE && sslStatus == SslStatus.ACTIVE;
+    }
+}

@@ -1,0 +1,120 @@
+import React, { useState } from 'react';
+
+interface AddDomainFormProps {
+  onSubmit: (domain: string) => Promise<void>;
+  maxDomains: number;
+  currentCount: number;
+}
+
+export function AddDomainForm({ onSubmit, maxDomains, currentCount }: AddDomainFormProps) {
+  const [domain, setDomain] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const canAddMore = maxDomains === 0 || currentCount < maxDomains;
+
+  const validateDomain = (value: string): string | null => {
+    if (!value.trim()) {
+      return 'Domain is required';
+    }
+
+    // Normalize: remove protocol, www, and trailing path
+    const normalized = value.toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/^www\./, '')
+      .replace(/\/.*$/, '')
+      .trim();
+
+    // RFC 1123 hostname validation
+    const pattern = /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.[a-z0-9-]{1,63})*\.[a-z]{2,}$/;
+    if (!pattern.test(normalized)) {
+      return 'Invalid domain format. Example: example.com';
+    }
+
+    return null;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    const validationError = validateDomain(domain);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await onSubmit(domain.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').trim());
+      setDomain('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add domain');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (!canAddMore) {
+    return (
+      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+        <p className="text-yellow-800">
+          You have reached the maximum of {maxDomains} custom domains.
+          Delete an existing domain to add a new one.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <label htmlFor="domain" className="block text-sm font-medium text-gray-700">
+          Domain Name
+        </label>
+        <div className="mt-1 flex rounded-md shadow-sm">
+          <input
+            type="text"
+            id="domain"
+            value={domain}
+            onChange={(e) => {
+              setDomain(e.target.value);
+              setError(null);
+            }}
+            placeholder="example.com"
+            className={`flex-1 min-w-0 block w-full px-3 py-2 rounded-l-md border ${
+              error ? 'border-red-300' : 'border-gray-300'
+            } focus:ring-blue-500 focus:border-blue-500`}
+            disabled={isSubmitting}
+          />
+          <button
+            type="submit"
+            disabled={isSubmitting || !domain.trim()}
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-r-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isSubmitting ? (
+              <>
+                <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                Adding...
+              </>
+            ) : (
+              'Add Domain'
+            )}
+          </button>
+        </div>
+        {error && (
+          <p className="mt-2 text-sm text-red-600">{error}</p>
+        )}
+        <p className="mt-2 text-sm text-gray-500">
+          Enter your domain without http:// or www. prefix.
+          {{#maxDomainsPerTeam}}
+          You can add up to {maxDomains} domains ({maxDomains - currentCount} remaining).
+          {{/maxDomainsPerTeam}}
+        </p>
+      </div>
+    </form>
+  );
+}

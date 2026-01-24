@@ -1,0 +1,114 @@
+{
+  "version": "3.0.0",
+  "metadata": {
+    "id": "extension-customdomain",
+    "name": "Custom Domains",
+    "kind": "extension",
+    "type": "customdomain",
+    "layers": ["backend", "frontend"],
+    "description": "Custom domain support with DNS verification and SSL provisioning",
+    "version": "1.0.0",
+    "author": "Genesis Team",
+    "tags": ["domains", "ssl", "dns", "multi-tenancy"],
+    "providers": ["aws"],
+    "compatibleWith": ["spring", "react"],
+    "dependsOn": ["extension-rdbms", "extension-teams"],
+    "springProfiles": ["customdomain"],
+    "allowMultiple": false,
+    "providesFragments": {
+      "custom-domain-system": {
+        "mode": "conflict"
+      }
+    }
+  },
+  "scaffoldConfigTemplate": [
+    {
+      "key": "sslProvider",
+      "label": "SSL Provider",
+      "type": "select",
+      "options": ["cloudflare-for-saas", "lets-encrypt", "aws-acm"],
+      "default": "cloudflare-for-saas",
+      "required": true,
+      "description": "SSL certificate provider",
+      "category": "configuration"
+    },
+    {
+      "key": "verificationMethod",
+      "label": "DNS Verification Method",
+      "type": "select",
+      "options": ["cname", "txt"],
+      "default": "cname",
+      "required": true,
+      "description": "How users verify domain ownership",
+      "category": "configuration"
+    },
+    {
+      "key": "maxDomainsPerTeam",
+      "label": "Max Domains per Team",
+      "type": "number",
+      "default": 3,
+      "required": true,
+      "description": "Maximum custom domains per team (0 = unlimited)",
+      "category": "configuration"
+    },
+    {
+      "key": "verificationTimeoutHours",
+      "label": "Verification Timeout (hours)",
+      "type": "number",
+      "default": 72,
+      "required": true,
+      "description": "Hours to complete DNS verification",
+      "category": "configuration"
+    },
+    {
+      "key": "fallbackDomain",
+      "label": "Fallback Domain",
+      "type": "text",
+      "default": "app.example.com",
+      "required": true,
+      "description": "Default domain when custom domain not configured",
+      "category": "configuration"
+    },
+    {
+      "key": "enableAutoRenewal",
+      "label": "Auto-Renew SSL Certificates",
+      "type": "boolean",
+      "default": true,
+      "required": false,
+      "description": "Automatically renew SSL certificates before expiry",
+      "category": "feature"
+    },
+    {
+      "key": "enableDomainBlocklist",
+      "label": "Block Reserved Domains",
+      "type": "boolean",
+      "default": true,
+      "required": false,
+      "description": "Block sensitive domains (e.g., your main domain, competitors)",
+      "category": "feature"
+    }
+  ],
+  "dependencies": {
+    "gradle": [],
+    "npm": {},
+    "pip": []
+  },
+  "runtimeConfigTemplate": [
+    {
+      "key": "CLOUDFLARE_ZONE_ID",
+      "description": "Cloudflare Zone ID for custom hostname API",
+      "example": "abc123def456",
+      "required": false,
+      "secret": false,
+      "targets": ["ops"]
+    },
+    {
+      "key": "CLOUDFLARE_API_TOKEN",
+      "description": "Cloudflare API token with Zone:Edit permission",
+      "example": "cf_api_token_xxx",
+      "required": false,
+      "secret": true,
+      "targets": ["ops"]
+    }
+  ]
+}

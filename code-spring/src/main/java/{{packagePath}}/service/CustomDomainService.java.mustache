@@ -1,0 +1,296 @@
+package {{packageName}}.service;
+
+import {{packageName}}.exception.DomainAlreadyExistsException;
+import {{packageName}}.exception.DomainLimitExceededException;
+import {{packageName}}.exception.DomainNotFoundException;
+import {{packageName}}.exception.InvalidDomainException;
+import {{packageName}}.jpa.entity.CustomDomainEntity;
+import {{packageName}}.jpa.entity.TeamEntity;
+import {{packageName}}.jpa.repository.CustomDomainRepository;
+import {{packageName}}.model.enumtype.DomainStatus;
+import {{packageName}}.model.enumtype.TeamRole;
+import {{packageName}}.model.req.DomainAddRequest;
+import {{packageName}}.model.rsp.DomainResponse;
+import {{packageName}}.model.rsp.DomainVerificationStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Profile;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.Arrays;
+import java.util.List;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
+/**
+ * Service for managing custom domains.
+ * Handles domain addition, verification, and lifecycle management.
+ */
+@Service
+@Profile("customdomain")
+@Transactional
+public class CustomDomainService {
+
+    private static final Logger log = LoggerFactory.getLogger(CustomDomainService.class);
+
+    private static final Pattern DOMAIN_PATTERN = Pattern.compile(
+        "^(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\\.[A-Za-z0-9-]{1,63})*\\.[A-Za-z]{2,}$"
+    );
+
+    private static final int MAX_DOMAINS_PER_TEAM = {{maxDomainsPerTeam}};
+    private static final String FALLBACK_DOMAIN = "{{fallbackDomain}}";
+
+    {{#enableDomainBlocklist}}
+    @Value("${app.customdomain.blocked-patterns:}")
+    private String blockedDomainPatterns;
+    {{/enableDomainBlocklist}}
+
+    private final CustomDomainRepository domainRepository;
+    private final TeamService teamService;
+    private final DnsVerificationService dnsVerificationService;
+    private final SslProvisioningService sslProvisioningService;
+
+    public CustomDomainService(
+            CustomDomainRepository domainRepository,
+            TeamService teamService,
+            DnsVerificationService dnsVerificationService,
+            SslProvisioningService sslProvisioningService) {
+        this.domainRepository = domainRepository;
+        this.teamService = teamService;
+        this.dnsVerificationService = dnsVerificationService;
+        this.sslProvisioningService = sslProvisioningService;
+    }
+
+    /**
+     * Add a new custom domain for a team.
+     */
+    public DomainResponse addDomain(Long teamId, DomainAddRequest request, Long userId) {
+        TeamEntity team = teamService.getTeamWithPermission(teamId, userId, TeamRole.ADMIN);
+
+        // Normalize and validate domain
+        String domain = normalizeDomain(request.getDomain());
+        validateDomainFormat(domain);
+
+        // Check domain limits
+        {{#maxDomainsPerTeam}}
+        if (MAX_DOMAINS_PER_TEAM > 0) {
+            long existingCount = domainRepository.countByTeamId(teamId);
+            if (existingCount >= MAX_DOMAINS_PER_TEAM) {
+                throw new DomainLimitExceededException(
+                    "Maximum of " + MAX_DOMAINS_PER_TEAM + " custom domains reached"
+                );
+            }
+        }
+        {{/maxDomainsPerTeam}}
+
+        // Check if domain already registered
+        if (domainRepository.existsByDomain(domain)) {
+            throw new DomainAlreadyExistsException("Domain '" + domain + "' is already registered");
+        }
+
+        // Check domain not on blocklist
+        {{#enableDomainBlocklist}}
+        validateDomainNotBlocked(domain);
+        {{/enableDomainBlocklist}}
+
+        // Create domain entity
+        CustomDomainEntity customDomain = new CustomDomainEntity();
+        customDomain.setTeam(team);
+        customDomain.setDomain(domain);
+
+        CustomDomainEntity saved = domainRepository.save(customDomain);
+        log.info("Custom domain added: {} for team {}", domain, teamId);
+
+        return DomainResponse.fromEntity(saved);
+    }
+
+    /**
+     * Get all domains for a team.
+     */
+    @Transactional(readOnly = true)
+    public List<DomainResponse> getDomainsForTeam(Long teamId, Long userId) {
+        teamService.getTeamWithPermission(teamId, userId, TeamRole.VIEWER);
+
+        return domainRepository.findByTeamIdOrderByCreatedAtDesc(teamId)
+            .stream()
+            .map(DomainResponse::fromEntity)
+            .collect(Collectors.toList());
+    }
+
+    /**
+     * Get a specific domain by ID.
+     */
+    @Transactional(readOnly = true)
+    public DomainResponse getDomain(Long teamId, Long domainId, Long userId) {
+        teamService.getTeamWithPermission(teamId, userId, TeamRole.VIEWER);
+
+        CustomDomainEntity domain = domainRepository.findById(domainId)
+            .orElseThrow(() -> new DomainNotFoundException("Domain not found"));
+
+        if (!domain.getTeam().getId().equals(teamId)) {
+            throw new DomainNotFoundException("Domain not found in this team");
+        }
+
+        return DomainResponse.fromEntity(domain);
+    }
+
+    /**
+     * Verify domain ownership via DNS.
+     */
+    public DomainVerificationStatus verifyDomain(Long teamId, Long domainId, Long userId) {
+        teamService.getTeamWithPermission(teamId, userId, TeamRole.ADMIN);
+
+        CustomDomainEntity domain = domainRepository.findById(domainId)
+            .orElseThrow(() -> new DomainNotFoundException("Domain not found"));
+
+        if (!domain.getTeam().getId().equals(teamId)) {
+            throw new DomainNotFoundException("Domain not found in this team");
+        }
+
+        if (domain.getStatus() == DomainStatus.ACTIVE) {
+            return DomainVerificationStatus.alreadyVerified();
+        }
+
+        if (domain.isVerificationExpired()) {
+            domain.setStatus(DomainStatus.VERIFICATION_FAILED);
+            domainRepository.save(domain);
+            return DomainVerificationStatus.expired();
+        }
+
+        boolean verified = dnsVerificationService.verifyDnsRecordWithFallback(
+            domain.getVerificationRecordName(),
+            domain.getVerificationRecordValue()
+        );
+
+        if (verified) {
+            domain.setStatus(DomainStatus.VERIFIED);
+            domain.setVerifiedAt(Instant.now());
+            domainRepository.save(domain);
+
+            // Trigger SSL provisioning asynchronously
+            sslProvisioningService.provisionSsl(domain);
+
+            log.info("Domain verified: {}", domain.getDomain());
+            return DomainVerificationStatus.verified();
+        }
+
+        return DomainVerificationStatus.pending(
+            domain.getVerificationRecordName(),
+            domain.getVerificationRecordValue(),
+            domain.getVerificationExpiresAt()
+        );
+    }
+
+    /**
+     * Delete a custom domain.
+     */
+    public void deleteDomain(Long teamId, Long domainId, Long userId) {
+        teamService.getTeamWithPermission(teamId, userId, TeamRole.ADMIN);
+
+        CustomDomainEntity domain = domainRepository.findById(domainId)
+            .orElseThrow(() -> new DomainNotFoundException("Domain not found"));
+
+        if (!domain.getTeam().getId().equals(teamId)) {
+            throw new DomainNotFoundException("Domain not found in this team");
+        }
+
+        // TODO: Clean up SSL certificate from provider if active
+
+        domainRepository.delete(domain);
+        log.info("Custom domain deleted: {} from team {}", domain.getDomain(), teamId);
+    }
+
+    /**
+     * Refresh verification token for a domain.
+     */
+    public DomainResponse refreshVerification(Long teamId, Long domainId, Long userId) {
+        teamService.getTeamWithPermission(teamId, userId, TeamRole.ADMIN);
+
+        CustomDomainEntity domain = domainRepository.findById(domainId)
+            .orElseThrow(() -> new DomainNotFoundException("Domain not found"));
+
+        if (!domain.getTeam().getId().equals(teamId)) {
+            throw new DomainNotFoundException("Domain not found in this team");
+        }
+
+        if (domain.getStatus() == DomainStatus.ACTIVE) {
+            throw new InvalidDomainException("Domain is already verified and active");
+        }
+
+        // Generate new verification token
+        domain.setVerificationToken(null);  // Will be regenerated on save
+        domain.setVerificationExpiresAt(null);  // Will be regenerated on save
+        domain.setVerificationRecordName(null);
+        domain.setVerificationRecordValue(null);
+        domain.setStatus(DomainStatus.PENDING_VERIFICATION);
+
+        CustomDomainEntity saved = domainRepository.save(domain);
+        log.info("Verification refreshed for domain: {}", domain.getDomain());
+
+        return DomainResponse.fromEntity(saved);
+    }
+
+    /**
+     * Find active domain for routing.
+     */
+    @Transactional(readOnly = true)
+    public CustomDomainEntity findActiveDomain(String domain) {
+        return domainRepository.findByDomain(normalizeDomain(domain))
+            .filter(CustomDomainEntity::isActive)
+            .orElse(null);
+    }
+
+    private String normalizeDomain(String domain) {
+        if (domain == null) {
+            throw new InvalidDomainException("Domain is required");
+        }
+        return domain.toLowerCase()
+            .replaceFirst("^https?://", "")
+            .replaceFirst("^www\\.", "")
+            .replaceFirst("/.*$", "")
+            .trim();
+    }
+
+    private void validateDomainFormat(String domain) {
+        if (!DOMAIN_PATTERN.matcher(domain).matches()) {
+            throw new InvalidDomainException("Invalid domain format: " + domain);
+        }
+
+        // Prevent subdomain of our own domain
+        if (domain.endsWith("." + FALLBACK_DOMAIN) || domain.equals(FALLBACK_DOMAIN)) {
+            throw new InvalidDomainException("Cannot use subdomain of platform domain");
+        }
+
+        // Prevent localhost and local domains
+        if (domain.endsWith(".local") || domain.endsWith(".localhost") || domain.equals("localhost")) {
+            throw new InvalidDomainException("Local domains are not allowed");
+        }
+    }
+
+    {{#enableDomainBlocklist}}
+    private void validateDomainNotBlocked(String domain) {
+        if (blockedDomainPatterns == null || blockedDomainPatterns.isEmpty()) {
+            return;
+        }
+
+        List<String> patterns = Arrays.asList(blockedDomainPatterns.split(","));
+        for (String pattern : patterns) {
+            String trimmed = pattern.trim().toLowerCase();
+            if (trimmed.isEmpty()) continue;
+
+            // Handle wildcard patterns like *.google.com
+            if (trimmed.startsWith("*.")) {
+                String suffix = trimmed.substring(1);  // Remove *
+                if (domain.endsWith(suffix) || domain.equals(suffix.substring(1))) {
+                    throw new InvalidDomainException("Domain is not allowed");
+                }
+            } else if (domain.equals(trimmed) || domain.endsWith("." + trimmed)) {
+                throw new InvalidDomainException("Domain is not allowed");
+            }
+        }
+    }
+    {{/enableDomainBlocklist}}
+}

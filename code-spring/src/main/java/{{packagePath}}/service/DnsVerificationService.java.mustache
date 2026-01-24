@@ -1,0 +1,162 @@
+package {{packageName}}.service;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Profile;
+import org.springframework.stereotype.Service;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Service for DNS record verification.
+ * Uses the `dig` command for cross-platform DNS lookups.
+ */
+@Service
+@Profile("customdomain")
+public class DnsVerificationService {
+
+    private static final Logger log = LoggerFactory.getLogger(DnsVerificationService.class);
+
+    private static final String[] DNS_SERVERS = {"8.8.8.8", "1.1.1.1", "208.67.222.222"};
+
+    @Value("${app.customdomain.dns.timeout-seconds:10}")
+    private int timeoutSeconds;
+
+    /**
+     * Verify DNS record using `dig` command.
+     *
+     * @param recordName Full record name (e.g., _grablin-verify.example.com)
+     * @param expectedValue Expected record value
+     * @return true if record exists and matches
+     */
+    public boolean verifyDnsRecord(String recordName, String expectedValue) {
+        {{#verificationMethod_cname}}
+        String recordType = "CNAME";
+        {{/verificationMethod_cname}}
+        {{#verificationMethod_txt}}
+        String recordType = "TXT";
+        {{/verificationMethod_txt}}
+
+        return verifyWithServer(recordName, expectedValue, recordType, DNS_SERVERS[0]);
+    }
+
+    /**
+     * Verify using multiple DNS servers for reliability.
+     */
+    public boolean verifyDnsRecordWithFallback(String recordName, String expectedValue) {
+        {{#verificationMethod_cname}}
+        String recordType = "CNAME";
+        {{/verificationMethod_cname}}
+        {{#verificationMethod_txt}}
+        String recordType = "TXT";
+        {{/verificationMethod_txt}}
+
+        for (String server : DNS_SERVERS) {
+            if (verifyWithServer(recordName, expectedValue, recordType, server)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean verifyWithServer(String recordName, String expectedValue, String recordType, String server) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder(
+                "dig", "+short", recordType, recordName, "@" + server
+            );
+            pb.redirectErrorStream(true);
+
+            Process process = pb.start();
+            boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+
+            if (!finished) {
+                process.destroyForcibly();
+                log.warn("DNS lookup timed out for {} using server {}", recordName, server);
+                return false;
+            }
+
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+
+            if (output.isEmpty()) {
+                log.debug("No DNS record found for {} using server {}", recordName, server);
+                return false;
+            }
+
+            // Parse output (may have multiple lines, quotes for TXT records)
+            String[] lines = output.split("\n");
+            for (String line : lines) {
+                String cleanLine = line.trim()
+                    .replace("\"", "")  // Remove TXT record quotes
+                    .replaceAll("\\.$", "");  // Remove trailing dot from CNAME
+
+                if ("CNAME".equals(recordType)) {
+                    // CNAME: check if it matches expected value (without trailing dot)
+                    String expectedClean = expectedValue.replaceAll("\\.$", "");
+                    if (cleanLine.equalsIgnoreCase(expectedClean)) {
+                        log.info("DNS CNAME verification successful for {}", recordName);
+                        return true;
+                    }
+                } else {
+                    // TXT: exact match
+                    if (cleanLine.equalsIgnoreCase(expectedValue)) {
+                        log.info("DNS TXT verification successful for {}", recordName);
+                        return true;
+                    }
+                }
+            }
+
+            log.debug("DNS record found but value mismatch for {}: expected={}, actual={}",
+                recordName, expectedValue, output);
+            return false;
+
+        } catch (IOException | InterruptedException e) {
+            log.error("DNS verification failed for {}: {}", recordName, e.getMessage());
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Check if a domain resolves to any IP address.
+     * Useful for checking if a domain is pointing to our servers.
+     */
+    public boolean domainResolvesToIp(String domain, String expectedIp) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder(
+                "dig", "+short", "A", domain, "@8.8.8.8"
+            );
+            pb.redirectErrorStream(true);
+
+            Process process = pb.start();
+            boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+
+            if (!finished) {
+                process.destroyForcibly();
+                return false;
+            }
+
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            String[] ips = output.split("\n");
+
+            for (String ip : ips) {
+                if (ip.trim().equals(expectedIp)) {
+                    return true;
+                }
+            }
+
+            return false;
+
+        } catch (IOException | InterruptedException e) {
+            log.error("DNS A record lookup failed for {}: {}", domain, e.getMessage());
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            return false;
+        }
+    }
+}

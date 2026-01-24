@@ -1,0 +1,118 @@
+package {{packageName}}.controller;
+
+import {{packageName}}.model.req.DomainAddRequest;
+import {{packageName}}.model.rsp.DomainResponse;
+import {{packageName}}.model.rsp.DomainVerificationStatus;
+import {{packageName}}.service.CustomDomainService;
+import jakarta.validation.Valid;
+import org.springframework.context.annotation.Profile;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+/**
+ * REST controller for custom domain management.
+ */
+@RestController
+@RequestMapping("/api/teams/{teamId}/domains")
+@Profile("customdomain")
+public class CustomDomainController {
+
+    private final CustomDomainService customDomainService;
+
+    public CustomDomainController(CustomDomainService customDomainService) {
+        this.customDomainService = customDomainService;
+    }
+
+    /**
+     * Add a new custom domain.
+     *
+     * POST /api/teams/{teamId}/domains
+     */
+    @PostMapping
+    public ResponseEntity<DomainResponse> addDomain(
+            @PathVariable Long teamId,
+            @Valid @RequestBody DomainAddRequest request,
+            @AuthenticationPrincipal Long userId) {
+
+        DomainResponse response = customDomainService.addDomain(teamId, request, userId);
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    /**
+     * List all domains for a team.
+     *
+     * GET /api/teams/{teamId}/domains
+     */
+    @GetMapping
+    public ResponseEntity<List<DomainResponse>> listDomains(
+            @PathVariable Long teamId,
+            @AuthenticationPrincipal Long userId) {
+
+        List<DomainResponse> domains = customDomainService.getDomainsForTeam(teamId, userId);
+        return ResponseEntity.ok(domains);
+    }
+
+    /**
+     * Get a specific domain.
+     *
+     * GET /api/teams/{teamId}/domains/{domainId}
+     */
+    @GetMapping("/{domainId}")
+    public ResponseEntity<DomainResponse> getDomain(
+            @PathVariable Long teamId,
+            @PathVariable Long domainId,
+            @AuthenticationPrincipal Long userId) {
+
+        DomainResponse domain = customDomainService.getDomain(teamId, domainId, userId);
+        return ResponseEntity.ok(domain);
+    }
+
+    /**
+     * Verify domain ownership.
+     *
+     * POST /api/teams/{teamId}/domains/{domainId}/verify
+     */
+    @PostMapping("/{domainId}/verify")
+    public ResponseEntity<DomainVerificationStatus> verifyDomain(
+            @PathVariable Long teamId,
+            @PathVariable Long domainId,
+            @AuthenticationPrincipal Long userId) {
+
+        DomainVerificationStatus status = customDomainService.verifyDomain(teamId, domainId, userId);
+        return ResponseEntity.ok(status);
+    }
+
+    /**
+     * Refresh verification token.
+     *
+     * POST /api/teams/{teamId}/domains/{domainId}/refresh
+     */
+    @PostMapping("/{domainId}/refresh")
+    public ResponseEntity<DomainResponse> refreshVerification(
+            @PathVariable Long teamId,
+            @PathVariable Long domainId,
+            @AuthenticationPrincipal Long userId) {
+
+        DomainResponse domain = customDomainService.refreshVerification(teamId, domainId, userId);
+        return ResponseEntity.ok(domain);
+    }
+
+    /**
+     * Delete a custom domain.
+     *
+     * DELETE /api/teams/{teamId}/domains/{domainId}
+     */
+    @DeleteMapping("/{domainId}")
+    public ResponseEntity<Void> deleteDomain(
+            @PathVariable Long teamId,
+            @PathVariable Long domainId,
+            @AuthenticationPrincipal Long userId) {
+
+        customDomainService.deleteDomain(teamId, domainId, userId);
+        return ResponseEntity.noContent().build();
+    }
+}

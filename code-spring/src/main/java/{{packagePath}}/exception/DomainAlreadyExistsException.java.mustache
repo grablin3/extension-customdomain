@@ -1,0 +1,19 @@
+package {{packageName}}.exception;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.ResponseStatus;
+
+/**
+ * Exception thrown when attempting to add a domain that already exists.
+ */
+@ResponseStatus(HttpStatus.CONFLICT)
+public class DomainAlreadyExistsException extends RuntimeException {
+
+    public DomainAlreadyExistsException(String message) {
+        super(message);
+    }
+
+    public DomainAlreadyExistsException(String message, Throwable cause) {
+        super(message, cause);
+    }
+}

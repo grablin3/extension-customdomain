@@ -1,0 +1,41 @@
+package {{packageName}}.model.enumtype;
+
+/**
+ * Status of a custom domain through its lifecycle.
+ */
+public enum DomainStatus {
+    /**
+     * Domain added, waiting for DNS verification
+     */
+    PENDING_VERIFICATION,
+
+    /**
+     * DNS verification failed or timed out
+     */
+    VERIFICATION_FAILED,
+
+    /**
+     * DNS verified, waiting for SSL provisioning
+     */
+    VERIFIED,
+
+    /**
+     * SSL certificate being provisioned
+     */
+    PROVISIONING_SSL,
+
+    /**
+     * Domain fully active with valid SSL
+     */
+    ACTIVE,
+
+    /**
+     * Domain suspended (billing, abuse, etc.)
+     */
+    SUSPENDED,
+
+    /**
+     * Domain expired or deactivated
+     */
+    EXPIRED
+}

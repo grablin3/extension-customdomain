@@ -1,0 +1,93 @@
+package {{packageName}}.model.rsp;
+
+import java.time.Instant;
+
+/**
+ * Response representing domain verification status.
+ */
+public class DomainVerificationStatus {
+
+    public enum VerificationResult {
+        VERIFIED,
+        PENDING,
+        EXPIRED,
+        ALREADY_VERIFIED
+    }
+
+    private VerificationResult result;
+    private String message;
+    private String recordName;
+    private String recordValue;
+    private String recordType;
+    private Instant expiresAt;
+
+    private DomainVerificationStatus() {
+    }
+
+    public static DomainVerificationStatus verified() {
+        DomainVerificationStatus status = new DomainVerificationStatus();
+        status.result = VerificationResult.VERIFIED;
+        status.message = "Domain ownership verified successfully. SSL provisioning started.";
+        return status;
+    }
+
+    public static DomainVerificationStatus alreadyVerified() {
+        DomainVerificationStatus status = new DomainVerificationStatus();
+        status.result = VerificationResult.ALREADY_VERIFIED;
+        status.message = "Domain is already verified.";
+        return status;
+    }
+
+    public static DomainVerificationStatus pending(String recordName, String recordValue, Instant expiresAt) {
+        DomainVerificationStatus status = new DomainVerificationStatus();
+        status.result = VerificationResult.PENDING;
+        status.message = "DNS record not found. Please add the verification record and try again.";
+        status.recordName = recordName;
+        status.recordValue = recordValue;
+        {{#verificationMethod_cname}}
+        status.recordType = "CNAME";
+        {{/verificationMethod_cname}}
+        {{#verificationMethod_txt}}
+        status.recordType = "TXT";
+        {{/verificationMethod_txt}}
+        status.expiresAt = expiresAt;
+        return status;
+    }
+
+    public static DomainVerificationStatus expired() {
+        DomainVerificationStatus status = new DomainVerificationStatus();
+        status.result = VerificationResult.EXPIRED;
+        status.message = "Verification period expired. Please remove and re-add the domain.";
+        return status;
+    }
+
+    // Getters
+
+    public VerificationResult getResult() {
+        return result;
+    }
+
+    public String getMessage() {
+        return message;
+    }
+
+    public String getRecordName() {
+        return recordName;
+    }
+
+    public String getRecordValue() {
+        return recordValue;
+    }
+
+    public String getRecordType() {
+        return recordType;
+    }
+
+    public Instant getExpiresAt() {
+        return expiresAt;
+    }
+
+    public boolean isVerified() {
+        return result == VerificationResult.VERIFIED || result == VerificationResult.ALREADY_VERIFIED;
+    }
+}

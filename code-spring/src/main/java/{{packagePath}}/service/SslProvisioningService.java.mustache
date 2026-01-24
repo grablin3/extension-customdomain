@@ -1,0 +1,325 @@
+package {{packageName}}.service;
+
+import {{packageName}}.jpa.entity.CustomDomainEntity;
+import {{packageName}}.jpa.repository.CustomDomainRepository;
+import {{packageName}}.model.enumtype.DomainStatus;
+import {{packageName}}.model.enumtype.SslStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Profile;
+import org.springframework.http.*;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.RestTemplate;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+/**
+ * Service for SSL certificate provisioning.
+ * Supports multiple SSL providers: Cloudflare for SaaS, Let's Encrypt, AWS ACM.
+ */
+@Service
+@Profile("customdomain")
+public class SslProvisioningService {
+
+    private static final Logger log = LoggerFactory.getLogger(SslProvisioningService.class);
+
+    {{#sslProvider_cloudflare-for-saas}}
+    private static final String CF_API_BASE = "https://api.cloudflare.com/client/v4";
+
+    @Value("${app.customdomain.cloudflare.zone-id:}")
+    private String zoneId;
+
+    @Value("${app.customdomain.cloudflare.api-token:}")
+    private String apiToken;
+    {{/sslProvider_cloudflare-for-saas}}
+
+    {{#sslProvider_lets-encrypt}}
+    @Value("${app.customdomain.letsencrypt.acme-server:https://acme-v02.api.letsencrypt.org/directory}")
+    private String acmeServer;
+    {{/sslProvider_lets-encrypt}}
+
+    private final CustomDomainRepository domainRepository;
+    private final RestTemplate restTemplate;
+
+    public SslProvisioningService(CustomDomainRepository domainRepository, RestTemplate restTemplate) {
+        this.domainRepository = domainRepository;
+        this.restTemplate = restTemplate;
+    }
+
+    /**
+     * Provision SSL certificate for a domain.
+     * Called after DNS verification succeeds.
+     */
+    @Async
+    @Transactional
+    public void provisionSsl(CustomDomainEntity domain) {
+        log.info("Provisioning SSL for domain: {}", domain.getDomain());
+
+        domain.setStatus(DomainStatus.PROVISIONING_SSL);
+        domain.setSslStatus(SslStatus.PROVISIONING);
+        domainRepository.save(domain);
+
+        {{#sslProvider_cloudflare-for-saas}}
+        provisionCloudflare(domain);
+        {{/sslProvider_cloudflare-for-saas}}
+        {{#sslProvider_lets-encrypt}}
+        provisionLetsEncrypt(domain);
+        {{/sslProvider_lets-encrypt}}
+        {{#sslProvider_aws-acm}}
+        provisionAwsAcm(domain);
+        {{/sslProvider_aws-acm}}
+    }
+
+    {{#sslProvider_cloudflare-for-saas}}
+    private void provisionCloudflare(CustomDomainEntity domain) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(apiToken);
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            // Create custom hostname via Cloudflare for SaaS
+            Map<String, Object> body = Map.of(
+                "hostname", domain.getDomain(),
+                "ssl", Map.of(
+                    "method", "http",
+                    "type", "dv",
+                    "settings", Map.of(
+                        "min_tls_version", "1.2",
+                        "http2", "on"
+                    )
+                )
+            );
+
+            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+
+            ResponseEntity<Map> response = restTemplate.exchange(
+                CF_API_BASE + "/zones/" + zoneId + "/custom_hostnames",
+                HttpMethod.POST,
+                request,
+                Map.class
+            );
+
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> result = (Map<String, Object>) response.getBody().get("result");
+                domain.setCloudflareHostnameId((String) result.get("id"));
+                domain.setCloudflareStatus((String) result.get("status"));
+
+                if ("active".equals(result.get("status"))) {
+                    domain.setStatus(DomainStatus.ACTIVE);
+                    domain.setSslStatus(SslStatus.ACTIVE);
+                }
+
+                domainRepository.save(domain);
+                log.info("SSL provisioning initiated for {}: status={}", domain.getDomain(), result.get("status"));
+            }
+
+        } catch (Exception e) {
+            log.error("Cloudflare SSL provisioning failed for {}: {}", domain.getDomain(), e.getMessage());
+            domain.setSslStatus(SslStatus.FAILED);
+            domainRepository.save(domain);
+        }
+    }
+
+    /**
+     * Scheduled task to check status of pending SSL certificates.
+     */
+    @Scheduled(fixedDelay = 60000)  // Every 1 minute
+    @Transactional
+    public void checkPendingSslStatus() {
+        List<CustomDomainEntity> pending = domainRepository
+            .findBySslStatusIn(List.of(SslStatus.PROVISIONING));
+
+        for (CustomDomainEntity domain : pending) {
+            if (domain.getCloudflareHostnameId() == null) continue;
+
+            // Exponential backoff based on how long we've been waiting
+            long waitingMinutes = Duration.between(
+                domain.getUpdatedAt(),
+                Instant.now()
+            ).toMinutes();
+
+            // Check less frequently for older pending domains
+            if (waitingMinutes > 60 && waitingMinutes % 5 != 0) continue;
+            if (waitingMinutes > 360 && waitingMinutes % 30 != 0) continue;
+
+            // Max retry: give up after 24 hours
+            if (waitingMinutes > 1440) {
+                domain.setSslStatus(SslStatus.FAILED);
+                domain.setStatus(DomainStatus.VERIFICATION_FAILED);
+                domainRepository.save(domain);
+                log.warn("SSL provisioning timed out for {}", domain.getDomain());
+                continue;
+            }
+
+            checkCloudflareStatus(domain);
+        }
+    }
+
+    private void checkCloudflareStatus(CustomDomainEntity domain) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(apiToken);
+
+            HttpEntity<Void> request = new HttpEntity<>(headers);
+
+            ResponseEntity<Map> response = restTemplate.exchange(
+                CF_API_BASE + "/zones/" + zoneId + "/custom_hostnames/" + domain.getCloudflareHostnameId(),
+                HttpMethod.GET,
+                request,
+                Map.class
+            );
+
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                log.error("Cloudflare API error for {}: HTTP {}",
+                    domain.getDomain(), response.getStatusCode());
+                return;
+            }
+
+            if (response.getBody() != null) {
+                Boolean success = (Boolean) response.getBody().get("success");
+                if (!Boolean.TRUE.equals(success)) {
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> errors = (List<Map<String, Object>>) response.getBody().get("errors");
+                    if (errors != null && !errors.isEmpty()) {
+                        String errorMsg = errors.stream()
+                            .map(e -> e.get("message").toString())
+                            .collect(Collectors.joining(", "));
+                        log.error("Cloudflare API error for {}: {}", domain.getDomain(), errorMsg);
+                    }
+                    return;
+                }
+
+                @SuppressWarnings("unchecked")
+                Map<String, Object> result = (Map<String, Object>) response.getBody().get("result");
+                String status = (String) result.get("status");
+                domain.setCloudflareStatus(status);
+
+                if ("active".equals(status)) {
+                    domain.setStatus(DomainStatus.ACTIVE);
+                    domain.setSslStatus(SslStatus.ACTIVE);
+                    log.info("SSL active for domain: {}", domain.getDomain());
+                } else if ("moved".equals(status) || "deleted".equals(status)) {
+                    domain.setSslStatus(SslStatus.FAILED);
+                    log.warn("SSL failed for {}: status={}", domain.getDomain(), status);
+                }
+
+                domainRepository.save(domain);
+            }
+        } catch (HttpClientErrorException | HttpServerErrorException e) {
+            log.error("Cloudflare API error for {}: {} - {}",
+                domain.getDomain(), e.getStatusCode(), e.getResponseBodyAsString());
+        } catch (Exception e) {
+            log.error("Failed to check SSL status for {}: {}", domain.getDomain(), e.getMessage());
+        }
+    }
+    {{/sslProvider_cloudflare-for-saas}}
+
+    {{#sslProvider_lets-encrypt}}
+    private void provisionLetsEncrypt(CustomDomainEntity domain) {
+        log.info("Provisioning Let's Encrypt SSL for: {}", domain.getDomain());
+
+        try {
+            // Note: Full ACME implementation requires acme4j library
+            // This is a placeholder showing the approach:
+            // 1. Create account or use existing
+            // 2. Create order for domain
+            // 3. Complete HTTP-01 challenge
+            // 4. Finalize order and download certificate
+            // 5. Store certificate
+
+            log.info("Let's Encrypt provisioning initiated for {}", domain.getDomain());
+            // TODO: Implement with acme4j library
+            // Add dependency: implementation 'org.shredzone.acme4j:acme4j-client:3.4.0'
+
+        } catch (Exception e) {
+            log.error("Let's Encrypt provisioning failed for {}: {}", domain.getDomain(), e.getMessage());
+            domain.setSslStatus(SslStatus.FAILED);
+            domainRepository.save(domain);
+        }
+    }
+
+    @Scheduled(fixedDelay = 60000)
+    @Transactional
+    public void checkPendingSslStatus() {
+        // Let's Encrypt status checking
+        List<CustomDomainEntity> pending = domainRepository
+            .findBySslStatusIn(List.of(SslStatus.PROVISIONING));
+
+        for (CustomDomainEntity domain : pending) {
+            // Check Let's Encrypt certificate status
+            // TODO: Implement certificate status checking
+        }
+    }
+    {{/sslProvider_lets-encrypt}}
+
+    {{#sslProvider_aws-acm}}
+    private void provisionAwsAcm(CustomDomainEntity domain) {
+        log.info("Provisioning AWS ACM certificate for: {}", domain.getDomain());
+
+        try {
+            // Note: Full implementation requires AWS SDK
+            // Add dependency: implementation 'software.amazon.awssdk:acm:2.25.0'
+            //
+            // RequestCertificateRequest request = RequestCertificateRequest.builder()
+            //     .domainName(domain.getDomain())
+            //     .validationMethod(ValidationMethod.DNS)
+            //     .build();
+            //
+            // RequestCertificateResponse response = acmClient.requestCertificate(request);
+            // domain.setAcmCertificateArn(response.certificateArn());
+
+            log.info("ACM certificate request initiated for {}", domain.getDomain());
+            // TODO: Implement with AWS SDK
+
+        } catch (Exception e) {
+            log.error("ACM provisioning failed for {}: {}", domain.getDomain(), e.getMessage());
+            domain.setSslStatus(SslStatus.FAILED);
+            domainRepository.save(domain);
+        }
+    }
+
+    @Scheduled(fixedDelay = 60000)
+    @Transactional
+    public void checkPendingSslStatus() {
+        // AWS ACM status checking
+        List<CustomDomainEntity> pending = domainRepository
+            .findBySslStatusIn(List.of(SslStatus.PROVISIONING));
+
+        for (CustomDomainEntity domain : pending) {
+            if (domain.getAcmCertificateArn() == null) continue;
+
+            // Check ACM certificate status
+            // TODO: Implement with AWS SDK
+        }
+    }
+    {{/sslProvider_aws-acm}}
+
+    {{#enableAutoRenewal}}
+    /**
+     * Check for SSL certificates expiring soon and trigger renewal.
+     */
+    @Scheduled(cron = "0 0 2 * * *")  // Daily at 2 AM
+    @Transactional
+    public void checkSslExpiry() {
+        // Find certificates expiring in next 30 days
+        Instant threshold = Instant.now().plus(Duration.ofDays(30));
+        List<CustomDomainEntity> expiringSoon = domainRepository.findSslExpiringSoon(threshold);
+
+        for (CustomDomainEntity domain : expiringSoon) {
+            log.info("SSL certificate expiring soon for {}, triggering renewal", domain.getDomain());
+            provisionSsl(domain);
+        }
+    }
+    {{/enableAutoRenewal}}
+}

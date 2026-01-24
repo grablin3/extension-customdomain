@@ -1,0 +1,99 @@
+package {{packageName}}.jpa.repository;
+
+import {{packageName}}.jpa.entity.CustomDomainEntity;
+import {{packageName}}.model.enumtype.DomainStatus;
+import {{packageName}}.model.enumtype.SslStatus;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * Repository for CustomDomainEntity persistence operations.
+ */
+@Repository
+public interface CustomDomainRepository extends JpaRepository<CustomDomainEntity, Long> {
+
+    /**
+     * Find domain by exact domain name.
+     */
+    Optional<CustomDomainEntity> findByDomain(String domain);
+
+    /**
+     * Check if domain already exists.
+     */
+    boolean existsByDomain(String domain);
+
+    /**
+     * Find all domains for a team.
+     */
+    List<CustomDomainEntity> findByTeamId(Long teamId);
+
+    /**
+     * Find all domains for a team ordered by creation date.
+     */
+    List<CustomDomainEntity> findByTeamIdOrderByCreatedAtDesc(Long teamId);
+
+    /**
+     * Count domains for a team.
+     */
+    long countByTeamId(Long teamId);
+
+    /**
+     * Find domain by verification token.
+     */
+    Optional<CustomDomainEntity> findByVerificationToken(String verificationToken);
+
+    /**
+     * Find domains pending verification that have expired.
+     */
+    @Query("SELECT d FROM CustomDomainEntity d WHERE d.status = :status AND d.verificationExpiresAt < :now")
+    List<CustomDomainEntity> findExpiredVerifications(
+        @Param("status") DomainStatus status,
+        @Param("now") Instant now
+    );
+
+    /**
+     * Find domains with specific SSL status.
+     */
+    List<CustomDomainEntity> findBySslStatus(SslStatus sslStatus);
+
+    /**
+     * Find domains with SSL status in list.
+     */
+    List<CustomDomainEntity> findBySslStatusIn(List<SslStatus> sslStatuses);
+
+    /**
+     * Find domains with SSL expiring soon.
+     */
+    @Query("SELECT d FROM CustomDomainEntity d WHERE d.sslStatus = 'ACTIVE' AND d.sslExpiresAt < :threshold")
+    List<CustomDomainEntity> findSslExpiringSoon(@Param("threshold") Instant threshold);
+
+    /**
+     * Find active domains for a team.
+     */
+    List<CustomDomainEntity> findByTeamIdAndStatus(Long teamId, DomainStatus status);
+
+    /**
+     * Find domain by team and domain name.
+     */
+    Optional<CustomDomainEntity> findByTeamIdAndDomain(Long teamId, String domain);
+
+    {{#sslProvider_cloudflare-for-saas}}
+    /**
+     * Find domain by Cloudflare hostname ID.
+     */
+    Optional<CustomDomainEntity> findByCloudflareHostnameId(String cloudflareHostnameId);
+    {{/sslProvider_cloudflare-for-saas}}
+
+    {{#sslProvider_aws-acm}}
+    /**
+     * Find domain by ACM certificate ARN.
+     */
+    Optional<CustomDomainEntity> findByAcmCertificateArn(String acmCertificateArn);
+    {{/sslProvider_aws-acm}}
+}

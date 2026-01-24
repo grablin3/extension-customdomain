@@ -1,0 +1,149 @@
+package {{packageName}}.model.rsp;
+
+import {{packageName}}.jpa.entity.CustomDomainEntity;
+import {{packageName}}.model.enumtype.DomainStatus;
+import {{packageName}}.model.enumtype.SslStatus;
+
+import java.time.Instant;
+
+/**
+ * Response representing a custom domain.
+ */
+public class DomainResponse {
+
+    private Long id;
+    private String domain;
+    private DomainStatus status;
+    private SslStatus sslStatus;
+    private String verificationRecordName;
+    private String verificationRecordValue;
+    private String verificationRecordType;
+    private Instant verificationExpiresAt;
+    private Instant verifiedAt;
+    private Instant sslExpiresAt;
+    private Instant createdAt;
+    private Instant updatedAt;
+
+    public DomainResponse() {
+    }
+
+    public static DomainResponse fromEntity(CustomDomainEntity entity) {
+        DomainResponse response = new DomainResponse();
+        response.setId(entity.getId());
+        response.setDomain(entity.getDomain());
+        response.setStatus(entity.getStatus());
+        response.setSslStatus(entity.getSslStatus());
+        response.setVerificationRecordName(entity.getVerificationRecordName());
+        response.setVerificationRecordValue(entity.getVerificationRecordValue());
+        {{#verificationMethod_cname}}
+        response.setVerificationRecordType("CNAME");
+        {{/verificationMethod_cname}}
+        {{#verificationMethod_txt}}
+        response.setVerificationRecordType("TXT");
+        {{/verificationMethod_txt}}
+        response.setVerificationExpiresAt(entity.getVerificationExpiresAt());
+        response.setVerifiedAt(entity.getVerifiedAt());
+        response.setSslExpiresAt(entity.getSslExpiresAt());
+        response.setCreatedAt(entity.getCreatedAt());
+        response.setUpdatedAt(entity.getUpdatedAt());
+        return response;
+    }
+
+    // Getters and Setters
+
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+
+    public String getDomain() {
+        return domain;
+    }
+
+    public void setDomain(String domain) {
+        this.domain = domain;
+    }
+
+    public DomainStatus getStatus() {
+        return status;
+    }
+
+    public void setStatus(DomainStatus status) {
+        this.status = status;
+    }
+
+    public SslStatus getSslStatus() {
+        return sslStatus;
+    }
+
+    public void setSslStatus(SslStatus sslStatus) {
+        this.sslStatus = sslStatus;
+    }
+
+    public String getVerificationRecordName() {
+        return verificationRecordName;
+    }
+
+    public void setVerificationRecordName(String verificationRecordName) {
+        this.verificationRecordName = verificationRecordName;
+    }
+
+    public String getVerificationRecordValue() {
+        return verificationRecordValue;
+    }
+
+    public void setVerificationRecordValue(String verificationRecordValue) {
+        this.verificationRecordValue = verificationRecordValue;
+    }
+
+    public String getVerificationRecordType() {
+        return verificationRecordType;
+    }
+
+    public void setVerificationRecordType(String verificationRecordType) {
+        this.verificationRecordType = verificationRecordType;
+    }
+
+    public Instant getVerificationExpiresAt() {
+        return verificationExpiresAt;
+    }
+
+    public void setVerificationExpiresAt(Instant verificationExpiresAt) {
+        this.verificationExpiresAt = verificationExpiresAt;
+    }
+
+    public Instant getVerifiedAt() {
+        return verifiedAt;
+    }
+
+    public void setVerifiedAt(Instant verifiedAt) {
+        this.verifiedAt = verifiedAt;
+    }
+
+    public Instant getSslExpiresAt() {
+        return sslExpiresAt;
+    }
+
+    public void setSslExpiresAt(Instant sslExpiresAt) {
+        this.sslExpiresAt = sslExpiresAt;
+    }
+
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(Instant createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public Instant getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setUpdatedAt(Instant updatedAt) {
+        this.updatedAt = updatedAt;
+    }
+}

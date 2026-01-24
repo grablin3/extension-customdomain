@@ -1,0 +1,31 @@
+package {{packageName}}.model.enumtype;
+
+/**
+ * Status of SSL certificate provisioning.
+ */
+public enum SslStatus {
+    /**
+     * Waiting for domain verification before SSL provisioning
+     */
+    PENDING,
+
+    /**
+     * SSL certificate being provisioned
+     */
+    PROVISIONING,
+
+    /**
+     * SSL certificate active and valid
+     */
+    ACTIVE,
+
+    /**
+     * SSL certificate expired
+     */
+    EXPIRED,
+
+    /**
+     * SSL provisioning failed
+     */
+    FAILED
+}
