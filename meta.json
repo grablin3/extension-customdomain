@@ -108,7 +108,8 @@
       "example": "cf_api_token_xxx",
       "required": false,
       "secret": true,
-      "targets": ["ops"]
+      "targets": ["ops"],
+      "gitStoreKey": "CLOUDFLARE_API_TOKEN"
     }
   ]
 }
